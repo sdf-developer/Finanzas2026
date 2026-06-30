@@ -18,7 +18,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14
 nav{display:flex;align-items:center;background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;height:54px;position:sticky;top:0;z-index:100}
 .nav-logo{font-size:17px;font-weight:700;color:var(--accent);letter-spacing:-.5px;margin-right:24px;white-space:nowrap}
 .nav-logo span{color:var(--text)}
-.nav-tabs{display:flex;gap:2px;flex:1;overflow-x:auto;scrollbar-width:none}
+.nav-tabs{display:flex;gap:2px;flex:1;overflow-x:auto;scrollbar-width:none;min-width:0}
 .nav-tabs::-webkit-scrollbar{display:none}
 .nav-tab{padding:7px 15px;border-radius:8px;cursor:pointer;color:var(--muted);font-weight:500;transition:all .15s;border:none;background:none;font-size:13px;white-space:nowrap}
 .nav-tab:hover{color:var(--text);background:var(--surface2)}
@@ -171,6 +171,7 @@ canvas{max-width:100%}
   .modal-box .form-grid{grid-template-columns:1fr!important}
   #rs-top-gastos > div > div:first-child{flex:0 0 90px!important;font-size:11px!important}
   #rs-top-gastos > div > div:last-child{flex:0 0 60px!important;font-size:12px!important}
+  #nav-clock{font-size:10px!important;margin-left:6px!important}
 }
 @media(max-width:400px){
   .summary-card .amount{font-size:20px}
@@ -181,7 +182,6 @@ canvas{max-width:100%}
 <body>
 
 <nav>
-  <div class="nav-logo">💳 Mis<span>Finanzas</span></div>
   <div class="nav-tabs">
     <button class="nav-tab active" onclick="showSection('resumen',this)">Resumen</button>
     <button class="nav-tab" onclick="showSection('movimientos',this)">Movimientos</button>
@@ -189,6 +189,7 @@ canvas{max-width:100%}
     <button class="nav-tab" onclick="showSection('graficos',this)">Gráficos</button>
     <button class="nav-tab" onclick="showSection('añadir',this)">+ Añadir</button>
   </div>
+  <div id="nav-clock" style="font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;margin-left:12px"></div>
 </nav>
 
 <div class="container">
@@ -218,15 +219,35 @@ canvas{max-width:100%}
 
   <div class="graf-row" style="margin-top:18px">
     <div class="graf-block graf-wide">
-      <div class="graf-title">Evolución del saldo · últimos 30 días</div>
+      <div class="graf-title">Evolución del saldo · mes a mes <span class="graf-sub" id="rs-evol-anio"></span></div>
       <canvas id="ch-resumen-evol" height="70"></canvas>
     </div>
   </div>
 
   <div class="graf-row">
     <div class="graf-block graf-wide">
-      <div class="graf-title">Mayores gastos del mes <span class="graf-sub" id="rs-top-mes"></span></div>
+      <div class="graf-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <span>Mayores gastos</span>
+        <div style="display:flex;gap:8px">
+          <select id="rs-top-month" onchange="renderResumenExtras()" style="font-size:12px;padding:5px 9px">
+            <option value="1">Enero</option><option value="2">Febrero</option>
+            <option value="3">Marzo</option><option value="4">Abril</option>
+            <option value="5">Mayo</option><option value="6">Junio</option>
+            <option value="7">Julio</option><option value="8">Agosto</option>
+            <option value="9">Septiembre</option><option value="10">Octubre</option>
+            <option value="11">Noviembre</option><option value="12">Diciembre</option>
+          </select>
+          <select id="rs-top-year" onchange="renderResumenExtras()" style="font-size:12px;padding:5px 9px"></select>
+        </div>
+      </div>
       <div id="rs-top-gastos" style="display:flex;flex-direction:column;gap:8px;margin-top:4px"></div>
+    </div>
+  </div>
+
+  <div class="graf-row">
+    <div class="graf-block graf-wide">
+      <div class="graf-title">Últimos movimientos</div>
+      <div id="rs-ultimos" style="display:flex;flex-direction:column;gap:2px;margin-top:4px"></div>
     </div>
   </div>
 </div>
@@ -542,56 +563,73 @@ function renderResumen(){
 
 let chartResumenEvol = null;
 
+let rsTopInit = false;
+
 function renderResumenExtras(){
-  // ── Evolución saldo últimos 30 días ──
-  const hoy = new Date();
-  const desde = new Date(hoy); desde.setDate(desde.getDate()-30);
+  // ── Inicializar selectores año/mes (solo la primera vez) ──
+  if(!rsTopInit){
+    const hoy = new Date();
+    const yrs = getYears();
+    const selYear = document.getElementById('rs-top-year');
+    selYear.innerHTML = yrs.map(y=>`<option value="${y}" ${y===hoy.getFullYear()?'selected':''}>${y}</option>`).join('');
+    document.getElementById('rs-top-month').value = hoy.getMonth()+1;
+    rsTopInit = true;
+  }
+
+  // ── Evolución del saldo mes a mes (todo el año del filtro principal) ──
+  const yrEvol = +document.getElementById('res-year').value || new Date().getFullYear();
+  document.getElementById('rs-evol-anio').textContent = yrEvol;
 
   const todos = allData().slice().sort((a,b)=>parseDate(a.fecha)-parseDate(b.fecha));
-  // saldo acumulado hasta el inicio del rango de 30 días
-  let acumHastaDesde = SALDO_INICIAL;
+
+  // Saldo acumulado hasta el 1 de enero del año seleccionado
+  let acumInicioAnio = SALDO_INICIAL;
   todos.forEach(t=>{
-    if(parseDate(t.fecha) < desde) acumHastaDesde += (t.tipo.includes('I')?Math.abs(t.importe):-Math.abs(t.importe));
+    if(parseDate(t.fecha) < new Date(yrEvol,0,1)) acumInicioAnio += (t.tipo.includes('I')?Math.abs(t.importe):-Math.abs(t.importe));
   });
 
-  const enRango = todos.filter(t=>{ const d=parseDate(t.fecha); return d>=desde && d<=hoy; });
-  let acum = acumHastaDesde;
+  let acum = acumInicioAnio;
   const labels=[], valores=[];
-  labels.push(desde.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'}));
-  valores.push(+acum.toFixed(2));
-  enRango.forEach(t=>{
-    acum += t.tipo.includes('I')?Math.abs(t.importe):-Math.abs(t.importe);
-    labels.push(parseDate(t.fecha).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'}));
+  const hoyEvol = new Date();
+  const ultimoMesValido = (yrEvol < hoyEvol.getFullYear()) ? 11 : (yrEvol === hoyEvol.getFullYear() ? hoyEvol.getMonth() : -1);
+  for(let m=0; m<=ultimoMesValido; m++){
+    const enMes = todos.filter(t=>{ const d=parseDate(t.fecha); return d.getFullYear()===yrEvol && d.getMonth()===m; });
+    enMes.forEach(t=>{ acum += t.tipo.includes('I')?Math.abs(t.importe):-Math.abs(t.importe); });
+    labels.push(MESES[m+1]);
     valores.push(+acum.toFixed(2));
-  });
+  }
 
   if(chartResumenEvol) chartResumenEvol.destroy();
+  if(labels.length === 0){
+    document.getElementById('ch-resumen-evol').getContext('2d').clearRect(0,0,9999,9999);
+  } else {
   chartResumenEvol = new Chart(document.getElementById('ch-resumen-evol'), {
     type:'line',
     data:{ labels, datasets:[{
       data:valores, borderColor:'#4f8ef7', backgroundColor:'rgba(79,142,247,0.1)',
-      borderWidth:2, pointRadius:0, pointHoverRadius:4, fill:true, tension:0.35
+      borderWidth:2, pointRadius:3, pointBackgroundColor:'#4f8ef7', pointHoverRadius:5, fill:true, tension:0.35
     }]},
     options:{
       responsive:true,
       plugins:{ legend:{display:false}, tooltip:{callbacks:{label:ctx=>' '+fmtAbs(ctx.parsed.y)+' €'}} },
       scales:{
-        x:{ ticks:{color:CO?CO.tick:'#6b7599', maxTicksLimit:8, maxRotation:0}, grid:{display:false} },
-        y:{ ticks:{color:CO?CO.tick:'#6b7599', callback:v=>v.toLocaleString('es-ES')+'€'}, grid:{color:'rgba(42,48,80,0.4)'} }
+        x:{ ticks:{color:'#6b7599'}, grid:{display:false} },
+        y:{ ticks:{color:'#6b7599', callback:v=>v.toLocaleString('es-ES')+'€'}, grid:{color:'rgba(42,48,80,0.4)'} }
       }
     }
   });
+  }
 
-  // ── Mayores gastos del mes actual ──
-  const mesActual = hoy.getMonth()+1, anioActual = hoy.getFullYear();
-  document.getElementById('rs-top-mes').textContent = `${MESES[mesActual]} ${anioActual}`;
+  // ── Mayores gastos del mes/año elegido ──
+  const mesSel = +document.getElementById('rs-top-month').value;
+  const anioSel = +document.getElementById('rs-top-year').value;
   const gastosMes = allData()
-    .filter(t=>{ const d=parseDate(t.fecha); return t.tipo.includes('G') && d.getMonth()+1===mesActual && d.getFullYear()===anioActual; })
+    .filter(t=>{ const d=parseDate(t.fecha); return t.tipo.includes('G') && d.getMonth()+1===mesSel && d.getFullYear()===anioSel; })
     .sort((a,b)=>Math.abs(b.importe)-Math.abs(a.importe))
     .slice(0,5);
 
   if(gastosMes.length===0){
-    document.getElementById('rs-top-gastos').innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Sin gastos este mes todavía.</div>';
+    document.getElementById('rs-top-gastos').innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Sin gastos en ese mes.</div>';
   } else {
     const max = Math.abs(gastosMes[0].importe);
     document.getElementById('rs-top-gastos').innerHTML = gastosMes.map(t=>{
@@ -604,6 +642,21 @@ function renderResumenExtras(){
         <div style="flex:0 0 75px;text-align:right;font-size:13px;font-weight:700;color:var(--red)">-${fmtAbs(t.importe)}</div>
       </div>`;
     }).join('');
+  }
+
+  // ── Últimos 5 movimientos (de todos, banco + manuales) ──
+  const ultimos = allData().slice().sort((a,b)=>parseDate(b.fecha)-parseDate(a.fecha)).slice(0,5);
+  if(ultimos.length===0){
+    document.getElementById('rs-ultimos').innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">No hay movimientos todavía.</div>';
+  } else {
+    document.getElementById('rs-ultimos').innerHTML = ultimos.map(t=>`
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 4px;border-bottom:1px solid rgba(42,48,80,.4)">
+        <div style="display:flex;flex-direction:column;gap:1px">
+          <span style="font-size:13px;font-weight:500">${t.nombre}</span>
+          <span style="font-size:11px;color:var(--muted)">${t.fecha}</span>
+        </div>
+        <span class="td-importe ${t.tipo.includes('G')?'gasto':'ingreso'}" style="font-size:14px">${t.tipo.includes('G')?'-':'+'}${fmtAbs(t.importe)}</span>
+      </div>`).join('');
   }
 }
 
@@ -667,9 +720,9 @@ function renderMovimientos(){
   const page=data.slice((currentPage-1)*PER_PAGE,currentPage*PER_PAGE);
 
   document.getElementById('mov-tbody').innerHTML=page.map(t=>`
-    <tr style="${t.manual?'border-left:2px solid var(--accent)':''}">
+    <tr>
       <td class="td-fecha">${t.fecha}</td>
-      <td class="td-nombre">${t.manual?'<span class="badge-manual">MANUAL</span>':''}${t.nombre}${t.nota?`<br><small style="color:var(--muted)">${t.nota}</small>`:''}</td>
+      <td class="td-nombre">${t.nombre}${t.nota?`<br><small style="color:var(--muted)">${t.nota}</small>`:''}</td>
       <td class="td-importe ${t.tipo.includes('G')?'gasto':'ingreso'}">${t.tipo.includes('G')?'-':'+'}${fmtAbs(t.importe)}</td>
       <td class="td-tipo"><span class="${t.tipo.includes('G')?'badge-gasto':'badge-ingreso'}">${t.tipo.includes('G')?'Gasto':'Ingreso'}</span></td>
     </tr>`).join('');
@@ -909,11 +962,28 @@ function showToast(msg,error=false){
   setTimeout(()=>t.className='toast'+(error?' error':''),2800);
 }
 
+// ── RELOJ MADRID ──
+function updateClock(){
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat('es-ES', {
+    timeZone: 'Europe/Madrid',
+    weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  });
+  const parts = fmt.formatToParts(now);
+  const get = type => parts.find(p=>p.type===type)?.value || '';
+  let wd = get('weekday'); wd = wd.charAt(0).toUpperCase()+wd.slice(1).replace('.','');
+  document.getElementById('nav-clock').textContent =
+    `${wd} ${get('day')}/${get('month')}/${get('year')} · ${get('hour')}:${get('minute')}:${get('second')}`;
+}
+
 // ── INIT ──
 function init(){
   fillYearSelects();
   document.getElementById('new-fecha').value=new Date().toISOString().split('T')[0];
   renderResumen();
+  updateClock();
+  setInterval(updateClock, 1000);
 }
 init();
 </script>
